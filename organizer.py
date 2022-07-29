@@ -15,7 +15,7 @@ import time
 import tkinter.scrolledtext as st
 
 directory = ""
-terms = ""
+cancelFlag = False
 customUI = None
 # Set the progress to be used for the progressbar
 progress = 0
@@ -28,20 +28,21 @@ lastClickY = 0
 
 def search_body(givenTerms):
     global directory
+    global cancelFlag
     global customUI
     global progress
     results = []
-
+    cancelFlag = False
     if givenTerms == "":
-        customUI.spawn_message("Please give at least one term")
+        customUI.set_results("Please give at least one term")
         return
 
     if directory == "":
-        customUI.spawn_message("Please select a folder")
+        customUI.set_results("Please select a folder")
         return
 
     while not os.path.isdir(directory):
-        customUI.spawn_message("The directory does not exist. Please try again")
+        customUI.set_results("The directory does not exist. Please try again")
         return
 
     # Get all files in directory
@@ -60,41 +61,52 @@ def search_body(givenTerms):
     #  Check each file
     index = 0
     for file in fileList:
-        if file.endswith(".pdf"):
-            # Open file
-            pdfFileObj = open(file, 'rb')
-            pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
+        if cancelFlag:
+            cancelFlag = False
+            customUI.set_results("Search Canceled")
+            progress = 0
+            return
 
-            # Accumulate text from each page
-            pageNum = pdfReader.numPages
-            accumulation = ""
-            for page in range(0, pageNum):
-                pageObj = pdfReader.getPage(page)
-                accumulation += pageObj.extractText()
+        try:
+            if file.endswith(".pdf"):
+                # Open file
+                pdfFileObj = open(file, 'rb')
+                pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
 
-            # Close the file
-            pdfFileObj.close()
+                # Accumulate text from each page
+                pageNum = pdfReader.numPages
+                accumulation = ""
+                for page in range(0, pageNum):
+                    pageObj = pdfReader.getPage(page)
+                    accumulation += pageObj.extractText()
 
-            accumulation = accumulation.lower()
+                # Close the file
+                pdfFileObj.close()
 
-            # Check contents
-            notFound = False
-            for term in givenTerms:
-                if term not in accumulation:
-                    notFound = True
-                    break
-            if not notFound:
-                results.append(file)
+                accumulation = accumulation.lower()
+
+                # Check contents
+                notFound = False
+                for term in givenTerms:
+                    if term not in accumulation:
+                        notFound = True
+                        break
+                if not notFound:
+                    results.append(file)
+        except:
+            print("Could not open file:" + file)
+            continue
         index+=1
         progress=(index/len(fileList))*100
-        customUI.set_progress()
+
     for i in range(len(results)):
         results[i] = results[i].replace("\\\\", "\\")
 
     if len(results) == 0:
         customUI.set_results("")
-        customUI.spawn_message("No files match this criteria")
+        customUI.set_results("No files match this criteria")
     else:
+        progress = 100
         formatedResults=""
         for result in results:
             formatedResults+=result+"\n"
@@ -104,18 +116,20 @@ def search_title(givenTerms):
     global directory
     global customUI
     global progress
+    global cancelFlag
     results = []
+    cancelFlag = False
 
     if givenTerms == "":
-        customUI.spawn_message("Please give at least one term")
+        customUI.set_results("Please give at least one term")
         return
 
     if directory == "":
-        customUI.spawn_message("Please select a folder")
+        customUI.set_results("Please select a folder")
         return
 
     while not os.path.isdir(directory):
-        customUI.spawn_message("The directory does not exist. Please try again")
+        customUI.set_results("The directory does not exist. Please try again")
         return
 
     # Get all files in directory
@@ -134,6 +148,12 @@ def search_title(givenTerms):
     #  Check each file
     index = 0
     for file in fileList:
+        if cancelFlag:
+            cancelFlag = False
+            customUI.set_results("Search Canceled")
+            progress = 0
+            return
+
         if file.endswith(".pdf"):
 
             accumulation = file.split("\\")[-1]
@@ -149,24 +169,23 @@ def search_title(givenTerms):
                 results.append(file)
         index+=1
         progress=(index/len(fileList))*100
-        customUI.set_progress()
     for i in range(len(results)):
         results[i] = results[i].replace("\\\\", "\\")
 
     if len(results) == 0:
         customUI.set_results("")
-        customUI.spawn_message("No files match this criteria")
+        customUI.set_results("No files match this criteria")
     else:
+        progress = 100
         formattedResults=""
         for result in results:
             formattedResults+=result+"\n"
-        customUI.set_results(formattedResults)
+            customUI.set_results(formattedResults)
 
 def browse_button():
     global directory
     filename = tkinter.filedialog.askdirectory()
     directory = filename
-
 
 def search_body_button_click(given_terms):
     given_terms = given_terms.get()
@@ -177,6 +196,10 @@ def search_title_button_click(given_terms):
     given_terms = given_terms.get()
     process_thread = threading.Thread(target=search_title, args=(given_terms,))
     process_thread.start()
+
+def cancel_search_button_click():
+    global cancelFlag
+    cancelFlag = True
 
 def set_app_window(root):
     GWL_EXSTYLE = -20
@@ -200,7 +223,7 @@ class UI:
     def __init__(self, master):
         self.master = master
         master.overrideredirect(True)  # turns off title bar, geometry
-        master.geometry('500x390+700+400')  # set new geometry
+        master.geometry('950x345+700+400')  # set new geometry
         master.attributes('-topmost', False)
         master.call("source", "forest-dark.tcl")
         ttk.Style().theme_use('forest-dark')
@@ -232,29 +255,28 @@ class UI:
 
         self.select_folder = ttk.Button(self.master, text="Select folder", style='Accent.TButton',
                                         command=browse_button)
-        self.window.create_window(280, 60, anchor='nw', window=self.select_folder)
+        self.window.create_window(510, 15, anchor='nw', window=self.select_folder)
 
         self.search_button = ttk.Button(self.master, text="Search Body", style='Accent.TButton',
                                           command=lambda: search_body_button_click(self.E1))
-        self.window.create_window(390, 60, anchor='nw', window=self.search_button)
+        self.window.create_window(840, 15, anchor='nw', window=self.search_button)
+
+        self.cancel_button = ttk.Button(self.master, text="Stop Search", style='Accent.TButton',
+                                          command=lambda: cancel_search_button_click())
+        self.window.create_window(620, 15, anchor='nw', window=self.cancel_button)
 
         self.search_button = ttk.Button(self.master, text="Search Title", style='Accent.TButton',
                                         command=lambda: search_title_button_click(self.E1))
-        self.window.create_window(170, 60, anchor='nw', window=self.search_button)
+        self.window.create_window(730, 15, anchor='nw', window=self.search_button)
 
         self.progress_label = ttk.Label(self.master, text="Progress:")
-        self.window.create_window(10, 105, anchor='nw', window=self.progress_label)
+        self.window.create_window(10, 60, anchor='nw', window=self.progress_label)
 
-        self.progress_bar = ttk.Progressbar(self.master, orient='horizontal', length=365, mode='determinate')
-        self.window.create_window(120, 110, anchor='nw', window=self.progress_bar)
+        self.progress_bar = ttk.Progressbar(self.master, orient='horizontal', length=820, mode='determinate')
+        self.window.create_window(120, 65, anchor='nw', window=self.progress_bar)
 
-        self.text_area = st.ScrolledText(self.master,
-                                    width=76,
-                                    height=15,
-                                    font=("Times New Roman",
-                                          10))
-
-        self.window.create_window(10, 130, anchor='nw', window=self.text_area)
+        self.text_area = st.ScrolledText(self.master, width=153, height=15, font=("Times New Roman", 10))
+        self.window.create_window(10, 85, anchor='nw', window=self.text_area)
 
         # Making the text read only
         self.text_area.configure(state='disabled')
@@ -283,16 +305,14 @@ class UI:
 
 def main():
     global directory
-    global terms
     global customUI
     # # root = "E:\Downloads\Organic"
 
     root = Tk()
     customUI = UI(root)
 
-    terms = customUI.E1.get()
     customUI.set_progress()
-    root.after(1, set_app_window, root)
+    root.after(30, set_app_window, root)
     root.mainloop()
 
 
