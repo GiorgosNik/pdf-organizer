@@ -52,6 +52,7 @@ def searchMain(givenTerms):
     results = []
     cancelFlag = False
 
+    # Print errors
     if givenTerms == "":
         customUI.set_results("Please give at least one term")
         return
@@ -69,10 +70,11 @@ def searchMain(givenTerms):
     temp_directory = directory
     for temp_directory, dirs, givenFiles in os.walk(temp_directory):
         for file in givenFiles:
-            # append the file name to the list
+            # Append the file name to the list
             if file.endswith(".pdf"):
                 fileList.append(os.path.join(temp_directory, file))
 
+    # Perform formatting on the search terms
     givenTerms = givenTerms.lower()
     givenTerms = givenTerms.split(",")
     for i in range(len(givenTerms)):
@@ -87,12 +89,16 @@ def searchMain(givenTerms):
     for i in range(len(fileList)):
         fileList[i]= list(fileList[i])
 
-    # Create and join threads
+    # Create and join processes
     process = [None] * processNum
     for i in range(processNum):
         process[i] = multiprocessing.Process(target=searchThread, args=(givenTerms, fileList[i], queue))
         process[i].start()
+
+    # Process monitoring loop
     while 1 == 1 :
+
+        # Check for cancellation command
         if cancelFlag:
             for i in range(processNum):
                 process[i].kill()
@@ -101,22 +107,30 @@ def searchMain(givenTerms):
             progress = 0
             customUI.set_results("Search Canceled")
             return
+
+        # Check the content of the queue
         ret = queue.get()
+
         if type(ret) == str:
+            # If we got a string, count as progress
             completedDocuments += 1
             progress = (completedDocuments / numberOfDocuments) * 100
         elif isinstance(ret, list):
+            # If we got a list, count a process as finished
             results.extend(ret)
             resultCounter+=1
             if resultCounter == processNum:
                 break
 
+    # Join all processes
     for i in range(processNum):
         process[i].join()
 
+    # Perform formatting on the results
     for i in range(len(results)):
         results[i] = results[i].replace("\\\\", "\\")
 
+    # Print Results
     if len(results) == 0:
         customUI.set_results("")
         customUI.set_results("No files match this criteria")
@@ -128,136 +142,44 @@ def searchMain(givenTerms):
         customUI.set_results(formattedResults)
 
 def searchThread(givenTerms, givenFiles, queue):
-    global directory
-    global cancelFlag
-    global customUI
-    global progress
-    global results
-    global completedDocuments
     localResults = []
+
     #  Check each file
     for file in givenFiles:
-        if cancelFlag:
-            return
-
         try:
-            if file.endswith(".pdf"):
-                # Open file
-                pdfFileObj = open(file, 'rb')
-                pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
 
-                # Accumulate text from each page
-                pageNum = pdfReader.numPages
-                accumulation = ""
-                for page in range(0, pageNum):
-                    pageObj = pdfReader.getPage(page)
-                    accumulation += pageObj.extractText()
+            # Open file
+            pdfFileObj = open(file, 'rb')
+            pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
 
-                # Close the file
-                pdfFileObj.close()
+            # Accumulate text from each page
+            pageNum = pdfReader.numPages
+            accumulation = ""
+            for page in range(0, pageNum):
+                pageObj = pdfReader.getPage(page)
+                accumulation += pageObj.extractText()
 
-                accumulation = accumulation.lower()
+            # Close the file
+            pdfFileObj.close()
 
-                # Check contents
-                notFound = False
-                for term in givenTerms:
-                    if term not in accumulation:
-                        notFound = True
-                        break
-                if not notFound:
-                    localResults.append(file)
+            # Convert the text to lowercase
+            accumulation = accumulation.lower()
+
+            # Check contents
+            notFound = False
+            for term in givenTerms:
+                if term not in accumulation:
+                    notFound = True
+                    break
+            if not notFound:
+                localResults.append(file)
             queue.put("Completed One")
         except:
+            # If we cant open the file, move on
             print("Could not open file:" + file)
             queue.put("Completed One")
             continue
     queue.put(localResults)
-
-def search_body(givenTerms):
-    global directory
-    global cancelFlag
-    global customUI
-    global progress
-    results = []
-    cancelFlag = False
-    if givenTerms == "":
-        customUI.set_results("Please give at least one term")
-        return
-
-    if directory == "":
-        customUI.set_results("Please select a folder")
-        return
-
-    while not os.path.isdir(directory):
-        customUI.set_results("The directory does not exist. Please try again")
-        return
-
-    # Get all files in directory
-    fileList = []
-    temp_directory = directory
-    for temp_directory, dirs, files in os.walk(temp_directory):
-        for file in files:
-            # append the file name to the list
-            fileList.append(os.path.join(temp_directory, file))
-
-    givenTerms = givenTerms.lower()
-    givenTerms = givenTerms.split(",")
-    for i in range(len(givenTerms)):
-        givenTerms[i] = givenTerms[i].strip()
-
-    #  Check each file
-    index = 0
-    for file in fileList:
-        if cancelFlag:
-            cancelFlag = False
-            customUI.set_results("Search Canceled")
-            progress = 0
-            return
-
-        try:
-            if file.endswith(".pdf"):
-                # Open file
-                pdfFileObj = open(file, 'rb')
-                pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
-
-                # Accumulate text from each page
-                pageNum = pdfReader.numPages
-                accumulation = ""
-                for page in range(0, pageNum):
-                    pageObj = pdfReader.getPage(page)
-                    accumulation += pageObj.extractText()
-
-                # Close the file
-                pdfFileObj.close()
-
-                accumulation = accumulation.lower()
-
-                # Check contents
-                notFound = False
-                for term in givenTerms:
-                    if term not in accumulation:
-                        notFound = True
-                        break
-                if not notFound:
-                    results.append(file)
-        except:
-            print("Could not open file:" + file)
-            continue
-        index+=1
-        progress=(index/len(fileList))*100
-
-    for i in range(len(results)):
-        results[i] = results[i].replace("\\\\", "\\")
-
-    if len(results) == 0:
-        customUI.set_results("")
-        customUI.set_results("No files match this criteria")
-    else:
-        progress = 100
-        formatedResults=""
-        for result in results:
-            formatedResults+=result+"\n"
-        customUI.set_results(formatedResults)
 
 def search_title(givenTerms):
     global directory
@@ -268,6 +190,7 @@ def search_title(givenTerms):
     results = []
     cancelFlag = False
 
+    # Display error messages
     if givenTerms == "":
         customUI.set_results("Please give at least one term")
         return
@@ -285,9 +208,10 @@ def search_title(givenTerms):
     temp_directory = directory
     for temp_directory, dirs, files in os.walk(temp_directory):
         for file in files:
-            # append the file name to the list
+            # Append the file name to the list
             fileList.append(os.path.join(temp_directory, file))
 
+    # Format the search terms
     givenTerms = givenTerms.lower()
     givenTerms = givenTerms.split(",")
     for i in range(len(givenTerms)):
@@ -302,12 +226,12 @@ def search_title(givenTerms):
             progress = 0
             return
 
+        # Check if the file is a pdf
         if file.endswith(".pdf"):
-
             accumulation = file.split("\\")[-1]
             accumulation = accumulation.lower()
 
-            # Check contents
+            # Check if the title matches the search terms
             notFound = False
             for term in givenTerms:
                 if term not in accumulation:
@@ -315,11 +239,16 @@ def search_title(givenTerms):
                     break
             if not notFound:
                 results.append(file)
+
+        # Count progress
         index+=1
         progress=(index/len(fileList))*100
+
+    # Format the results
     for i in range(len(results)):
         results[i] = results[i].replace("\\\\", "\\")
 
+    # Print the results
     if len(results) == 0:
         customUI.set_results("")
         customUI.set_results("No files match this criteria")
@@ -331,25 +260,30 @@ def search_title(givenTerms):
             customUI.set_results(formattedResults)
 
 def browse_button():
+    # Handler for the directory selection button
     global directory
     filename = tkinter.filedialog.askdirectory()
     directory = filename
 
 def search_body_button_click(given_terms):
+    # On click function to start and pass argument to the search thread
     given_terms = given_terms.get()
     process_thread = threading.Thread(target=searchMain, args=(given_terms,))
     process_thread.start()
 
 def search_title_button_click(given_terms):
+    # On click function to start and pass argument to the search thread
     given_terms = given_terms.get()
     process_thread = threading.Thread(target=search_title, args=(given_terms,))
     process_thread.start()
 
 def cancel_search_button_click():
+    # Set the global cancellation flag
     global cancelFlag
     cancelFlag = True
 
 def set_app_window(root):
+    # Needed for custom UI
     GWL_EXSTYLE = -20
     WS_EX_APPWINDOW = 0x00040000
     WS_EX_TOOLWINDOW = 0x00000080
@@ -363,6 +297,7 @@ def set_app_window(root):
     root.after(10, root.deiconify)
 
 def save_last_click_pos(event):
+    # Needed for custom UI
     global lastClickX, lastClickY
     lastClickX = event.x
     lastClickY = event.y
@@ -452,10 +387,9 @@ class UI:
         self.messageBox = tkinter.messagebox.showinfo(title=given_title, message=given_message)
 
 def main():
-    global directory
     global customUI
-    # # root = "E:\Downloads\Organic"
 
+    # Set the UI as a global, start mainloop
     root = Tk()
     customUI = UI(root)
 
