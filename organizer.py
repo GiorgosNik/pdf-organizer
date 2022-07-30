@@ -13,10 +13,15 @@ from tkinter import *
 from ctypes import windll
 import time
 import tkinter.scrolledtext as st
+import multiprocessing
+import numpy
 
+# General Use Globals
 directory = ""
 cancelFlag = False
 customUI = None
+results = []
+
 # Set the progress to be used for the progressbar
 progress = 0
 
@@ -24,7 +29,149 @@ progress = 0
 lastClickX = 0
 lastClickY = 0
 
-# Used by tkinter
+# Threading Stuff
+processNum = 8
+completedDocuments = 0
+numberOfDocuments = 0
+
+
+def searchMain(givenTerms):
+    global processNum
+    global directory
+    global customUI
+    global cancelFlag
+    global results
+    global progress
+    global completedDocuments
+    global numberOfDocuments
+
+    queue = multiprocessing.Queue()
+
+    resultCounter = 0
+    completedDocuments = 0
+    results = []
+    cancelFlag = False
+
+    if givenTerms == "":
+        customUI.set_results("Please give at least one term")
+        return
+
+    if directory == "":
+        customUI.set_results("Please select a folder")
+        return
+
+    while not os.path.isdir(directory):
+        customUI.set_results("The directory does not exist. Please try again")
+        return
+
+    # Get all files in directory
+    fileList = []
+    temp_directory = directory
+    for temp_directory, dirs, givenFiles in os.walk(temp_directory):
+        for file in givenFiles:
+            # append the file name to the list
+            if file.endswith(".pdf"):
+                fileList.append(os.path.join(temp_directory, file))
+
+    givenTerms = givenTerms.lower()
+    givenTerms = givenTerms.split(",")
+    for i in range(len(givenTerms)):
+        givenTerms[i] = givenTerms[i].strip()
+
+    # Set the number of documents globally to track progress
+    numberOfDocuments = len(fileList)
+
+    # Split the fileList
+    fileList = numpy.array(fileList)
+    fileList = numpy.array_split(fileList, processNum)
+    for i in range(len(fileList)):
+        fileList[i]= list(fileList[i])
+
+    # Create and join threads
+    process = [None] * processNum
+    for i in range(processNum):
+        process[i] = multiprocessing.Process(target=searchThread, args=(givenTerms, fileList[i], queue))
+        process[i].start()
+    while 1 == 1 :
+        if cancelFlag:
+            for i in range(processNum):
+                process[i].kill()
+                process[i].join()
+            cancelFlag = False
+            progress = 0
+            customUI.set_results("Search Canceled")
+            return
+        ret = queue.get()
+        if type(ret) == str:
+            completedDocuments += 1
+            progress = (completedDocuments / numberOfDocuments) * 100
+        elif isinstance(ret, list):
+            results.extend(ret)
+            resultCounter+=1
+            if resultCounter == processNum:
+                break
+
+    for i in range(processNum):
+        process[i].join()
+
+    for i in range(len(results)):
+        results[i] = results[i].replace("\\\\", "\\")
+
+    if len(results) == 0:
+        customUI.set_results("")
+        customUI.set_results("No files match this criteria")
+    else:
+        progress = 100
+        formattedResults = ""
+        for result in results:
+            formattedResults += result + "\n"
+        customUI.set_results(formattedResults)
+
+def searchThread(givenTerms, givenFiles, queue):
+    global directory
+    global cancelFlag
+    global customUI
+    global progress
+    global results
+    global completedDocuments
+    localResults = []
+    #  Check each file
+    for file in givenFiles:
+        if cancelFlag:
+            return
+
+        try:
+            if file.endswith(".pdf"):
+                # Open file
+                pdfFileObj = open(file, 'rb')
+                pdfReader = PyPDF2.PdfFileReader(pdfFileObj, strict=False)
+
+                # Accumulate text from each page
+                pageNum = pdfReader.numPages
+                accumulation = ""
+                for page in range(0, pageNum):
+                    pageObj = pdfReader.getPage(page)
+                    accumulation += pageObj.extractText()
+
+                # Close the file
+                pdfFileObj.close()
+
+                accumulation = accumulation.lower()
+
+                # Check contents
+                notFound = False
+                for term in givenTerms:
+                    if term not in accumulation:
+                        notFound = True
+                        break
+                if not notFound:
+                    localResults.append(file)
+            queue.put("Completed One")
+        except:
+            print("Could not open file:" + file)
+            queue.put("Completed One")
+            continue
+    queue.put(localResults)
 
 def search_body(givenTerms):
     global directory
@@ -117,6 +264,7 @@ def search_title(givenTerms):
     global customUI
     global progress
     global cancelFlag
+    global results
     results = []
     cancelFlag = False
 
@@ -189,7 +337,7 @@ def browse_button():
 
 def search_body_button_click(given_terms):
     given_terms = given_terms.get()
-    process_thread = threading.Thread(target=search_body, args=(given_terms,))
+    process_thread = threading.Thread(target=searchMain, args=(given_terms,))
     process_thread.start()
 
 def search_title_button_click(given_terms):
