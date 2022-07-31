@@ -1,20 +1,14 @@
-import os
 import PyPDF2
 import os
-import glob
-import requests
-import shutil
-import random
 import tkinter.filedialog
 import threading
 from tkinter import ttk
-from zipfile import ZipFile
 from tkinter import *
 from ctypes import windll
-import time
 import tkinter.scrolledtext as st
 import multiprocessing
 import numpy
+import xlsxwriter
 
 # General Use Globals
 directory = ""
