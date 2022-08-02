@@ -9,12 +9,16 @@ import tkinter.scrolledtext as st
 import multiprocessing
 import numpy
 import xlsxwriter
+import pandas as pd
+import re
+import ctypes.wintypes
 
 # General Use Globals
 directory = ""
 cancelFlag = False
 customUI = None
 results = []
+search_type = ""
 
 # Set the progress to be used for the progressbar
 progress = 0
@@ -38,6 +42,7 @@ def searchMain(givenTerms):
     global progress
     global completedDocuments
     global numberOfDocuments
+    global search_type
 
     queue = multiprocessing.Queue()
 
@@ -45,6 +50,7 @@ def searchMain(givenTerms):
     completedDocuments = 0
     results = []
     cancelFlag = False
+    search_type = "Body"
 
     # Print errors
     if givenTerms == "":
@@ -70,6 +76,7 @@ def searchMain(givenTerms):
 
     # Perform formatting on the search terms
     givenTerms = givenTerms.lower()
+    termsToPrint = givenTerms
     givenTerms = givenTerms.split(",")
     for i in range(len(givenTerms)):
         givenTerms[i] = givenTerms[i].strip()
@@ -81,7 +88,7 @@ def searchMain(givenTerms):
     fileList = numpy.array(fileList)
     fileList = numpy.array_split(fileList, processNum)
     for i in range(len(fileList)):
-        fileList[i]= list(fileList[i])
+        fileList[i] = list(fileList[i])
 
     # Create and join processes
     process = [None] * processNum
@@ -90,7 +97,7 @@ def searchMain(givenTerms):
         process[i].start()
 
     # Process monitoring loop
-    while 1 == 1 :
+    while 1 == 1:
 
         # Check for cancellation command
         if cancelFlag:
@@ -112,7 +119,7 @@ def searchMain(givenTerms):
         elif isinstance(ret, list):
             # If we got a list, count a process as finished
             results.extend(ret)
-            resultCounter+=1
+            resultCounter += 1
             if resultCounter == processNum:
                 break
 
@@ -130,10 +137,11 @@ def searchMain(givenTerms):
         customUI.set_results("No files match this criteria")
     else:
         progress = 100
-        formattedResults = ""
+        formattedResults = "Results for: " + termsToPrint + "\n"
         for result in results:
             formattedResults += result + "\n"
         customUI.set_results(formattedResults)
+
 
 def searchThread(givenTerms, givenFiles, queue):
     localResults = []
@@ -159,9 +167,13 @@ def searchThread(givenTerms, givenFiles, queue):
             # Convert the text to lowercase
             accumulation = accumulation.lower()
 
+            # Remove Punctuation
+            accumulation = re.sub(r'[^\w\s]', '', accumulation)
+
             # Check contents
             notFound = False
             for term in givenTerms:
+                term = " " + term
                 if term not in accumulation:
                     notFound = True
                     break
@@ -175,12 +187,16 @@ def searchThread(givenTerms, givenFiles, queue):
             continue
     queue.put(localResults)
 
+
 def search_title(givenTerms):
     global directory
     global customUI
     global progress
     global cancelFlag
     global results
+    global search_type
+
+    search_type = "Title"
     results = []
     cancelFlag = False
 
@@ -207,6 +223,7 @@ def search_title(givenTerms):
 
     # Format the search terms
     givenTerms = givenTerms.lower()
+    termsToPrint = givenTerms
     givenTerms = givenTerms.split(",")
     for i in range(len(givenTerms)):
         givenTerms[i] = givenTerms[i].strip()
@@ -235,8 +252,8 @@ def search_title(givenTerms):
                 results.append(file)
 
         # Count progress
-        index+=1
-        progress=(index/len(fileList))*100
+        index += 1
+        progress = (index / len(fileList)) * 100
 
     # Format the results
     for i in range(len(results)):
@@ -248,10 +265,19 @@ def search_title(givenTerms):
         customUI.set_results("No files match this criteria")
     else:
         progress = 100
-        formattedResults=""
+        formattedResults = "Results for: " + termsToPrint + "\n"
         for result in results:
-            formattedResults+=result+"\n"
+            formattedResults += result + "\n"
             customUI.set_results(formattedResults)
+
+def getDocumentsDirectory():
+    CSIDL_PERSONAL = 5  # My Documents
+    SHGFP_TYPE_CURRENT = 0  # Get current, not default value
+
+    buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+    ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_PERSONAL, None, SHGFP_TYPE_CURRENT, buf)
+
+    return buf.value
 
 def browse_button():
     # Handler for the directory selection button
@@ -259,11 +285,89 @@ def browse_button():
     filename = tkinter.filedialog.askdirectory()
     directory = filename
 
+
+def save_to_sheet():
+    # Function to save the results in Excel-compatible format
+
+    global search_type
+    global directory
+    global customUI
+
+    # Retrieve the results
+    toSave = customUI.retrieve_results()
+
+    if len(toSave) == 0 or toSave == "Please select a folder" or toSave == "No files match this criteria" or toSave == "Search Canceled":
+        customUI.set_results("Cant save empty results")
+        return
+
+    # Split the results
+    toSave = toSave.splitlines()
+
+    for i in range(1, len(toSave)):
+        toSave[i] = os.path.abspath(toSave[i])
+
+    previous = []
+    if os.path.exists("organizer_results.xlsx"):
+        df = pd.read_excel(r'organizer_results.xlsx')
+        previous = df.values.tolist()
+
+    documents = getDocumentsDirectory()
+    if not os.path.exists(documents+"/Organizer"):
+        os.makedirs(documents+"/Organizer")
+
+    # Create and format the workbook
+    workbook = xlsxwriter.Workbook(documents+"/Organizer/organizer_results.xlsx")
+    worksheet = workbook.add_worksheet()
+    worksheet.set_column('A:A', 20)
+    worksheet.set_column('B:B', 20)
+    worksheet.set_column('C:C', 50)
+    worksheet.set_column('D:D', 70)
+    worksheet.set_column('E:E', 150)
+
+    #  Get the search term
+    searchTerms = toSave[0].split(":")[1].strip()
+
+    toSave.pop(0)
+    worksheet.write(0, 0, "TERM")
+    worksheet.write(0, 1, "TYPE")
+    worksheet.write(0, 2, "ROOT DIRECTORY")
+    worksheet.write(0, 3, "LOCATION")
+    worksheet.write(0, 4, "RESULT")
+
+    for result in toSave:
+        previous.append([searchTerms, search_type, directory, result.rsplit('\\', 1)[0], result.rsplit('\\', 1)[1]])
+
+    toWrite = []
+    for result in previous:
+        flag = True
+        for deduplicatedResult in toWrite:
+            if len(set(result) & set(deduplicatedResult)) == 5:
+                flag = False
+                break
+        if flag:
+            toWrite.append(result)
+
+    for result in toWrite:
+        print(result)
+
+    for i in range(len(toWrite)):
+        worksheet.write(i + 1, 0, toWrite[i][0])
+        worksheet.write(i + 1, 1, toWrite[i][1])
+        worksheet.write(i + 1, 2, toWrite[i][2])
+        worksheet.write(i + 1, 3, toWrite[i][3])
+        worksheet.write(i + 1, 4, toWrite[i][4])
+
+    workbook.close()
+
+    customUI.set_results("Results Saved at: "+ documents+"/Organizer/organizer_results.xlsx")
+
+
 def search_body_button_click(given_terms):
     # On click function to start and pass argument to the search thread
     given_terms = given_terms.get()
     process_thread = threading.Thread(target=searchMain, args=(given_terms,))
     process_thread.start()
+
 
 def search_title_button_click(given_terms):
     # On click function to start and pass argument to the search thread
@@ -271,10 +375,12 @@ def search_title_button_click(given_terms):
     process_thread = threading.Thread(target=search_title, args=(given_terms,))
     process_thread.start()
 
+
 def cancel_search_button_click():
     # Set the global cancellation flag
     global cancelFlag
     cancelFlag = True
+
 
 def set_app_window(root):
     # Needed for custom UI
@@ -290,11 +396,13 @@ def set_app_window(root):
     root.withdraw()
     root.after(10, root.deiconify)
 
+
 def save_last_click_pos(event):
     # Needed for custom UI
     global lastClickX, lastClickY
     lastClickX = event.x
     lastClickY = event.y
+
 
 class UI:
     def __init__(self, master):
@@ -321,25 +429,29 @@ class UI:
 
         # Create the widgets
         self.master.after(10, set_app_window, self.master)
-        self.E1 = ttk.Entry(self.master, width=50)
+        self.E1 = ttk.Entry(self.master, width=35)
         self.window.create_window(120, 15, anchor='nw', window=self.E1)
-        self.playlist_label = tkinter.Label(self.master, text="Search Terms")
-        self.window.create_window(10, 20, anchor='nw', window=self.playlist_label)
+        self.search_terms = tkinter.Label(self.master, text="Search Terms")
+        self.window.create_window(10, 20, anchor='nw', window=self.search_terms)
 
         self.entryString = self.E1.get()
 
         self.v = tkinter.StringVar()
+
+        self.save_results = ttk.Button(self.master, text="Save Results", style='Accent.TButton',
+                                       command=save_to_sheet)
+        self.window.create_window(400, 15, anchor='nw', window=self.save_results)
 
         self.select_folder = ttk.Button(self.master, text="Select folder", style='Accent.TButton',
                                         command=browse_button)
         self.window.create_window(510, 15, anchor='nw', window=self.select_folder)
 
         self.search_button = ttk.Button(self.master, text="Search Body", style='Accent.TButton',
-                                          command=lambda: search_body_button_click(self.E1))
+                                        command=lambda: search_body_button_click(self.E1))
         self.window.create_window(840, 15, anchor='nw', window=self.search_button)
 
         self.cancel_button = ttk.Button(self.master, text="Stop Search", style='Accent.TButton',
-                                          command=lambda: cancel_search_button_click())
+                                        command=lambda: cancel_search_button_click())
         self.window.create_window(620, 15, anchor='nw', window=self.cancel_button)
 
         self.search_button = ttk.Button(self.master, text="Search Title", style='Accent.TButton',
@@ -377,8 +489,13 @@ class UI:
 
     def spawn_message(self, given_message, given_title=None):
         self.messageBox = tkinter.messagebox.showinfo(title=given_title, message=given_message)
+
     def spawn_results(self, given_message, given_title=None):
         self.messageBox = tkinter.messagebox.showinfo(title=given_title, message=given_message)
+
+    def retrieve_results(self):
+        return self.text_area.get("1.0", 'end-1c')
+
 
 def main():
     global customUI
